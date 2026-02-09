@@ -132,28 +132,64 @@ run_test() {
     echo "✅ Test completed: throughput=${throughput}MB/s, consumer_groups=${consumer_groups}"
 }
 
-# Parse test specification
-echo "📋 Parsing test configuration..."
-test_spec=$(cat "$CONFIG_DIR/test-spec.json")
+# Function to run all tests based on configuration
+run_all_tests_from_config() {
+    # Parse test specification from JSON using Python for proper parsing
+    echo "📋 Parsing test configuration..."
+    
+    # Use Python to extract parameters from test-spec.json
+    python3 << EOF
+import json
+import sys
 
-# Extract parameters (simplified parsing for this example)
-# In production, you'd want to properly parse the JSON
-throughput_values=(16 24 32 40 48 56 64 72 80)
-consumer_group_configs=(0 1 2)
+try:
+    with open('$CONFIG_DIR/test-spec.json', 'r') as f:
+        config = json.load(f)
+    
+    # Extract parameters from the JSON configuration
+    spec = config['test_specification']['parameters']
+    
+    # Write to temporary file for shell to source
+    with open('/tmp/kafka_test_params.sh', 'w') as temp_file:
+        # Process throughput values
+        throughput_values = spec.get('cluster_throughput_mb_per_sec', [])
+        temp_file.write(f"throughput_values={repr(throughput_values)}\n")
+        
+        # Process consumer_groups
+        consumer_groups = spec.get('consumer_groups', [])
+        consumer_nums = [cg['num_groups'] for cg in consumer_groups]
+        temp_file.write(f"consumer_group_configs={repr(consumer_nums)}\n")
+        
+except Exception as e:
+    print(f"Error parsing test-spec.json: {e}", file=sys.stderr)
+    sys.exit(1)
+EOF
 
-# Create results directory
-mkdir -p "$RESULTS_DIR"
-
-test_counter=1
-
-# Run all test combinations
-for throughput in "${throughput_values[@]}"; do
-    for consumer_groups in "${consumer_group_configs[@]}"; do
-        run_test $throughput $consumer_groups $test_counter
-        ((test_counter++))
-        sleep 10  # Brief pause between tests
-    done
+    # Source the parameters extracted from JSON
+    if [ -f "/tmp/kafka_test_params.sh" ]; then
+        source "/tmp/kafka_test_params.sh"
+    else
+        echo "❌ Failed to parse test-spec.json"
+        exit 1
+    fi
+    
+    # Create results directory
+    mkdir -p "$RESULTS_DIR"
+    
+    local test_counter=1
+    
+    # Run all test combinations
+    for throughput in "${throughput_values[@]}"; do
+        for consumer_groups in "${consumer_group_configs[@]}"; do
+            run_test $throughput $consumer_groups $test_counter
+            ((test_counter++))
+            sleep 10  # Brief pause between tests
+        done
 done
+}
+
+# Main execution - run all tests based on configuration
+run_all_tests_from_config
 
 echo "🎉 All tests completed!"
 echo "📊 Results saved in: $RESULTS_DIR"

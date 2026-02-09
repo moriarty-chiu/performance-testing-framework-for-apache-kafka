@@ -124,3 +124,14 @@ The comparative analysis will help you:
 4. **Plan capacity for future growth**
 
 Check the generated charts and summary JSON for detailed insights into each cluster flavor's performance limits.
+
+run-flavor-tests.sh:
+  1. Copy test-spec-small.json -> test-spec.json
+  2. Run run-tests-binary.sh
+     -> run-tests-binary.sh reads test-spec.json
+     -> run-tests-binary.sh calls run_all_tests_from_config()
+     -> run_all_tests_from_config() parses test-spec.json
+     -> run_all_tests_from_config() loops through all test combinations
+     -> For each combination: run_test(throughput, consumer_groups, test_id)
+  3. Results saved to results/small/
+  4. Repeat for medium, large, xlarge configs
