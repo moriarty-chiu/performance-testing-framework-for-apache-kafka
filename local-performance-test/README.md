@@ -9,6 +9,7 @@ local-performance-test/
 ├── config/                # Test configurations
 ├── scripts/               # Test execution scripts
 ├── results/               # Test output and logs
+├── DETAILED_USAGE.md      # Comprehensive usage guide
 ├── BINARY_MODE_README.md  # Binary mode usage guide
 ├── FLAVOR_TESTING_GUIDE.md # Cluster flavor testing guide
 └── requirements.txt       # Python dependencies
@@ -27,6 +28,16 @@ local-performance-test/
 - Local execution using Kafka binary tools
 - Simplified orchestration
 - Direct result collection and visualization
+
+## 📖 Detailed Documentation
+
+For comprehensive information about:
+- Script descriptions and purposes
+- Parameter specifications and meanings
+- How parameters affect testing
+- Best practices and troubleshooting
+
+See: [DETAILED_USAGE.md](DETAILED_USAGE.md)
 
 ## 📊 What You'll Get
 
