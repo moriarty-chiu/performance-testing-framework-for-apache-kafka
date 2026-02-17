@@ -18,43 +18,62 @@ def load_results(results_file):
 
 def create_throughput_vs_latency_chart(results, output_dir):
     """Create throughput vs latency chart"""
-    # Group results by consumer group count
-    grouped_results = {}
+    # Group results by test ID to infer consumer group configuration
+    # Based on the pattern: 27 tests with 9 throughput values and 3 consumer group configs
+    # Test IDs 1-9: 0 consumer groups
+    # Test IDs 10-18: 1 consumer group  
+    # Test IDs 19-27: 2 consumer groups
+    grouped_results = {0: [], 1: [], 2: []}
+    
     for result in results:
-        # Extract consumer group info from test_id (simplified)
-        consumer_groups = 0  # This would need to be parsed from test configuration
-        if consumer_groups not in grouped_results:
-            grouped_results[consumer_groups] = []
+        test_id = result['test_id']
+        # Map test ID to consumer group configuration
+        # Based on the generation pattern: 
+        # Throughput values: [16, 24, 32, 40, 48, 56, 64, 72, 80] (9 values)
+        # Consumer groups: [0, 1, 2] (3 values) 
+        # So tests 1-9 correspond to consumer_groups=0, tests 10-18 to consumer_groups=1, tests 19-27 to consumer_groups=2
+        if 1 <= test_id <= 9:
+            consumer_groups = 0
+        elif 10 <= test_id <= 18:
+            consumer_groups = 1
+        elif 19 <= test_id <= 27:
+            consumer_groups = 2
+        else:
+            consumer_groups = 0  # default
+            
+        # Add consumer group info to result for better tracking
+        result['consumer_groups'] = consumer_groups
         grouped_results[consumer_groups].append(result)
-    
+
     plt.figure(figsize=(12, 8))
-    
+
     # Plot for each consumer group configuration
     colors = ['blue', 'red', 'green']
-    for i, (consumer_groups, group_results) in enumerate(grouped_results.items()):
+    markers = ['o', 's', '^']
+    for i, (consumer_groups, group_results) in enumerate(sorted(grouped_results.items())):
         if not group_results:
             continue
-            
+
         # Sort by throughput
         sorted_results = sorted(group_results, key=lambda x: x['total_mb_per_sec'])
         throughputs = [r['total_mb_per_sec'] for r in sorted_results]
         p50_latencies = [r['avg_latency_ms_p50'] for r in sorted_results]
         p99_latencies = [r['avg_latency_ms_p99'] for r in sorted_results]
-        
-        plt.plot(throughputs, p50_latencies, 
-                marker='o', linestyle='-', color=colors[i], 
+
+        plt.plot(throughputs, p50_latencies,
+                marker=markers[0], linestyle='-', color=colors[i],
                 label=f'P50 Latency ({consumer_groups} consumer groups)')
-        plt.plot(throughputs, p99_latencies, 
-                marker='s', linestyle='--', color=colors[i], 
+        plt.plot(throughputs, p99_latencies,
+                marker=markers[1], linestyle='--', color=colors[i],
                 label=f'P99 Latency ({consumer_groups} consumer groups)')
-    
+
     plt.xlabel('Throughput (MB/sec)')
     plt.ylabel('Latency (ms)')
-    plt.title('Kafka Performance: Throughput vs Latency')
+    plt.title('Kafka Performance: Throughput vs Latency by Consumer Groups')
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    
+
     output_file = os.path.join(output_dir, 'throughput_vs_latency.png')
     plt.savefig(output_file, dpi=300, bbox_inches='tight')
     plt.close()

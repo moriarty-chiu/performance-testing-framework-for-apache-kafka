@@ -36,20 +36,20 @@ def parse_producer_output_binary(log_content):
                 }
                 
                 # Look for percentile latencies in the rest of the line
-                # Match patterns like "2ms 50th, 15ms 95th, 20ms 99th, 25ms 99.9th"
-                p50_match = re.search(r'(\d+(?:\.\d+)?)ms 50th', line)
+                # Match patterns like "2ms 50th, 15ms 95th, 20ms 99th, 25ms 99.9th" or "2.50 ms 50th"
+                p50_match = re.search(r'(\d+(?:\.\d+)?)\s*ms\s+50th', line)
                 if p50_match:
                     metrics['latency_ms_p50'] = float(p50_match.group(1))
-                
-                p95_match = re.search(r'(\d+(?:\.\d+)?)ms 95th', line)
+
+                p95_match = re.search(r'(\d+(?:\.\d+)?)\s*ms\s+95th', line)
                 if p95_match:
                     metrics['latency_ms_p95'] = float(p95_match.group(1))
-                
-                p99_match = re.search(r'(\d+(?:\.\d+)?)ms 99th', line)
+
+                p99_match = re.search(r'(\d+(?:\.\d+)?)\s*ms\s+99th', line)
                 if p99_match:
                     metrics['latency_ms_p99'] = float(p99_match.group(1))
-                
-                p999_match = re.search(r'(\d+(?:\.\d+)?)ms 99.9th', line)
+
+                p999_match = re.search(r'(\d+(?:\.\d+)?)\s*ms\s+99.9th', line)
                 if p999_match:
                     metrics['latency_ms_p999'] = float(p999_match.group(1))
                 
@@ -225,6 +225,25 @@ def main():
                   f"P99 latency: {result['avg_latency_ms_p99']:.1f}ms")
     else:
         print("No results found to process")
+        print("\n💡 Possible reasons:")
+        print("- The run-tests-binary.sh script hasn't been executed yet")
+        print("- The tests were run with --use-mock-data flag, but logs weren't generated")
+        print("- The Kafka cluster wasn't available during test execution")
+        print("- Log files were generated in a different directory")
+        
+        print(f"\n📋 Expected log file patterns in {args.results_dir}/:")
+        print("- Producer logs: test-*-producer-*.log (e.g., test-1-producer-0.log)")
+        print("- Consumer logs: test-*-consumer-*-*.log (e.g., test-1-consumer-0-0.log)")
+        
+        print(f"\n🔍 Found files in {args.results_dir}/:")
+        import os
+        for file in os.listdir(args.results_dir):
+            print(f"- {file}")
+            
+        print("\n🔧 Suggestions:")
+        print("- Run './scripts/run-tests-binary.sh --use-mock-data' to generate sample logs")
+        print("- Or run './scripts/run-tests-binary.sh' with a working Kafka cluster")
+        print("- Verify that KAFKA_HOME is set correctly if using real Kafka")
 
 if __name__ == "__main__":
     main()
