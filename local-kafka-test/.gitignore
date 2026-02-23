@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Test results
+results/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Configuration examples (keep, but ignore actual configs with secrets)
+# config-ssl-sasl.example.yaml is kept as template
+# Users should create their own config.yaml

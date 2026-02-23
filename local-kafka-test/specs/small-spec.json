@@ -1,0 +1,25 @@
+{
+  "test_specification": {
+    "parameters": {
+      "cluster_throughput_mb_per_sec": [4, 8, 12, 16],
+      "num_producers": [2],
+      "consumer_groups": [
+        {"num_groups": 0, "size": 2},
+        {"num_groups": 1, "size": 2}
+      ],
+      "client_props": [
+        {
+          "producer": "acks=all linger.ms=5 batch.size=32768 buffer.memory=1073741824",
+          "consumer": ""
+        }
+      ],
+      "num_partitions": [12],
+      "record_size_byte": [1024],
+      "replication_factor": [1],
+      "duration_sec": [30]
+    },
+    "skip_remaining_throughput": {
+      "less-than": ["sent_div_requested_mb_per_sec", 0.90]
+    }
+  }
+}

@@ -1,0 +1,36 @@
+# Local Kafka Performance Test Configuration
+
+# Kafka 安装路径
+kafka_home: /opt/kafka
+
+# Kafka 连接地址
+bootstrap_servers: localhost:9092
+
+# 结果输出目录
+results_dir: ./results
+
+# 日志级别
+log_level: INFO
+
+# Java 堆内存配置
+java_heap_opts: "-Xms1G -Xmx3584m"
+
+# 安全配置（可选，所有测试共用）
+# 取消注释并填写以启用 SSL/SASL
+security:
+  # 安全协议：PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL
+  security_protocol: PLAINTEXT
+  
+  # SASL 配置
+  # sasl_mechanism: SCRAM-SHA-512
+  # sasl_username: your_username
+  # sasl_password: your_password
+  
+  # SSL 配置
+  # ssl_truststore_location: /path/to/truststore.jks
+  # ssl_truststore_password: password
+  # ssl_keystore_location: /path/to/keystore.jks
+  # ssl_keystore_password: password
+  
+  # SSL 端点算法
+  # ssl_endpoint_identification_algorithm: ""  # 禁用主机名验证（内网测试）

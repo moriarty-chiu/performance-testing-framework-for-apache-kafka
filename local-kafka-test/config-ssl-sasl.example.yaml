@@ -1,0 +1,50 @@
+# SSL/SASL 配置示例
+# 复制此文件为 config.yaml 并根据需要修改
+
+# Kafka 安装路径
+kafka_home: /opt/kafka
+
+# Kafka 连接地址
+bootstrap_servers: kafka-cluster.example.com:9093
+
+# 结果输出目录
+results_dir: ./results
+
+# 日志级别
+log_level: INFO
+
+# Java 堆内存配置
+java_heap_opts: "-Xms1G -Xmx3584m"
+
+# ===== 安全配置 =====
+
+security:
+  # 安全协议选择:
+  # - PLAINTEXT: 无加密无认证（默认）
+  # - SSL: 仅加密
+  # - SASL_PLAINTEXT: 仅认证
+  # - SASL_SSL: 加密 + 认证
+  security_protocol: SASL_SSL
+  
+  # ===== SASL 配置 (SCRAM-SHA-512) =====
+  sasl_mechanism: SCRAM-SHA-512
+  sasl_username: test_user
+  sasl_password: your_secure_password_here
+  
+  # ===== SSL 配置 =====
+  # Truststore (验证服务器证书)
+  ssl_truststore_location: /path/to/client.truststore.jks
+  ssl_truststore_password: truststore_password
+  
+  # Keystore (客户端证书，双向认证需要)
+  ssl_keystore_location: /path/to/client.keystore.jks
+  ssl_keystore_password: keystore_password
+  
+  # SSL 端点算法
+  # 内网测试可禁用以避免主机名验证问题
+  ssl_endpoint_identification_algorithm: ""
+  
+  # ===== 其他 SSL 配置 (可选) =====
+  # ssl_protocol: TLSv1.3
+  # ssl_enabled_protocols: TLSv1.2,TLSv1.3
+  # ssl.cipher.suites: TLS_AES_256_GCM_SHA384
