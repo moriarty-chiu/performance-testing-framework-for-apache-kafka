@@ -610,30 +610,31 @@ class KafkaPerformanceTester:
     def run_test_suite(self, spec_path: str) -> List[Dict[str, Any]]:
         """
         Run a complete test suite from specification.
-        
+
         Args:
             spec_path: Path to test specification JSON file
-            
+
         Returns:
             List of all test results
         """
         logger.info(f"Loading test specification from {spec_path}")
         event = load_test_specification(spec_path)
-        
+
         all_results = []
         test_count = 0
         max_tests = 1000  # Safety limit
-        
+
         while test_count < max_tests:
+            # Increment to next test configuration
             event = increment_index_and_update_parameters(event)
-            
+
             if event.get('all_tests_completed', False):
                 logger.info("All tests completed!")
                 break
-            
+
             test_params = event['current_test']['parameters']
             test_count += 1
-            
+
             logger.info(f"\n{'='*60}")
             logger.info(f"Running test {test_count}")
             logger.info(f"Topic: {test_params['topic_name']}")
@@ -641,19 +642,20 @@ class KafkaPerformanceTester:
             logger.info(f"Producers: {test_params['num_producers']}")
             logger.info(f"Consumer groups: {test_params['consumer_groups']}")
             logger.info(f"{'='*60}\n")
-            
+
             # Run the test
             results = self.run_test(test_params)
             all_results.append(results)
-            
-            # Check skip condition
-            if 'skip_remaining_throughput' in event['test_specification']:
+
+            # Check skip condition AFTER running the test
+            if 'skip_remaining_throughput' in event.get('test_specification', {}):
+                # Set producer result for skip condition evaluation
                 event['producer_result'] = results['producer_results'][0] if results['producer_results'] else {}
-                
+
                 skip_condition = event['test_specification']['skip_remaining_throughput']
                 if evaluate_skip_condition(skip_condition, event):
-                    logger.info("Skip condition met, skipping remaining throughput values")
-        
+                    logger.info(f"Skip condition met (sent/requested = {event['producer_result'].get('mbPerSecSum', 0) / test_params['cluster_throughput_mb_per_sec']:.3f}), skipping remaining throughput values")
+
         return all_results
 
 

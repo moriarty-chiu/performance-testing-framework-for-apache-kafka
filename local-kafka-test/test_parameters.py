@@ -27,10 +27,10 @@ random.seed()
 def increment_index_and_update_parameters(event: Dict[str, Any]) -> Dict[str, Any]:
     """
     Increment the test index and update parameters for the next test.
-    
+
     Args:
         event: Current test event containing test_specification and optionally current_test
-        
+
     Returns:
         Updated event with new parameters
     """
@@ -41,11 +41,16 @@ def increment_index_and_update_parameters(event: Dict[str, Any]) -> Dict[str, An
         skip_condition = test_specification.get("skip_remaining_throughput")
 
         try:
-            if skip_condition and evaluate_skip_condition(skip_condition, event):
-                # Skip remaining throughput values
-                (updated_test_index, throughput_series_id) = skip_remaining_throughput(previous_test_index, event)
+            # Only evaluate skip condition if we have a producer_result from the previous test
+            if skip_condition and "producer_result" in event and event["producer_result"]:
+                if evaluate_skip_condition(skip_condition, event):
+                    # Skip remaining throughput values
+                    (updated_test_index, throughput_series_id) = skip_remaining_throughput(previous_test_index, event)
+                else:
+                    # Increment to next test configuration
+                    (updated_test_index, throughput_series_id) = increment_test_index(previous_test_index, event, 0)
             else:
-                # Increment to next test configuration
+                # No skip condition or no producer_result, just increment
                 (updated_test_index, throughput_series_id) = increment_test_index(previous_test_index, event, 0)
         except OverflowError:
             # All tests have been executed
