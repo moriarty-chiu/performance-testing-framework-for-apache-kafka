@@ -28,8 +28,8 @@ security:
   
   # ===== SASL 配置 (SCRAM-SHA-512) =====
   sasl_mechanism: SCRAM-SHA-512
-  sasl_username: test_user
-  sasl_password: your_secure_password_here
+  sasl_username: alice
+  sasl_password: alice-secret
   
   # ===== SSL 配置 =====
   # Truststore (验证服务器证书)
@@ -41,7 +41,10 @@ security:
   ssl_keystore_password: keystore_password
   
   # SSL 端点算法
-  # 内网测试可禁用以避免主机名验证问题
+  # 重要：此参数控制 SSL 端点主机名验证
+  # - "" (空字符串): 禁用主机名验证（内网测试/开发环境）
+  # - "HTTPS": 启用主机名验证（生产环境）
+  # 注意：即使是空字符串也必须设置，否则 SASL_SSL 连接会失败
   ssl_endpoint_identification_algorithm: ""
   
   # ===== 其他 SSL 配置 (可选) =====

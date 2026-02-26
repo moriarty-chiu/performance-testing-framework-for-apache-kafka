@@ -14,6 +14,7 @@ import re
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from datetime import datetime
@@ -79,46 +80,70 @@ class KafkaPerformanceTester:
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
 
-    def _build_security_properties(self) -> str:
-        """Build security properties string from config."""
-        props = []
+    def _build_security_properties(self) -> Dict[str, str]:
+        """Build security properties dictionary from config."""
+        props = {}
 
         security_protocol = self.security_config.get('security_protocol', 'PLAINTEXT')
         if security_protocol != 'PLAINTEXT':
-            props.append(f'security.protocol={security_protocol}')
+            props['security.protocol'] = security_protocol
 
         # SASL configuration
         sasl_mechanism = self.security_config.get('sasl_mechanism')
         if sasl_mechanism:
-            props.append(f'sasl.mechanism={sasl_mechanism}')
+            props['sasl.mechanism'] = sasl_mechanism
 
         sasl_username = self.security_config.get('sasl_username')
         sasl_password = self.security_config.get('sasl_password')
         if sasl_username and sasl_password:
-            # SCRAM configuration
-            props.append(f'sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username="{sasl_username}" password="{sasl_password}";')
+            # SCRAM JAAS configuration - must be a single line
+            jaas_config = (
+                f'org.apache.kafka.common.security.scram.ScramLoginModule required '
+                f'username="{sasl_username}" password="{sasl_password}";'
+            )
+            props['sasl.jaas.config'] = jaas_config
 
         # SSL configuration
         ssl_truststore = self.security_config.get('ssl_truststore_location')
         ssl_truststore_password = self.security_config.get('ssl_truststore_password')
         if ssl_truststore:
-            props.append(f'ssl.truststore.location={ssl_truststore}')
+            props['ssl.truststore.location'] = ssl_truststore
         if ssl_truststore_password:
-            props.append(f'ssl.truststore.password={ssl_truststore_password}')
+            props['ssl.truststore.password'] = ssl_truststore_password
 
         ssl_keystore = self.security_config.get('ssl_keystore_location')
         ssl_keystore_password = self.security_config.get('ssl_keystore_password')
         if ssl_keystore:
-            props.append(f'ssl.keystore.location={ssl_keystore}')
+            props['ssl.keystore.location'] = ssl_keystore
         if ssl_keystore_password:
-            props.append(f'ssl.keystore.password={ssl_keystore_password}')
+            props['ssl.keystore.password'] = ssl_keystore_password
 
-        # SSL endpoint identification (disable for internal testing)
+        # SSL endpoint identification algorithm
+        # Important: This must be set even if empty (for internal testing)
+        # - Empty string (""): Disable hostname verification (testing/internal networks)
+        # - "HTTPS": Enable hostname verification (production)
         ssl_endpoint_algo = self.security_config.get('ssl_endpoint_identification_algorithm')
         if ssl_endpoint_algo is not None:
-            props.append(f'ssl.endpoint.identification.algorithm={ssl_endpoint_algo}')
+            # Always set this if present in config, even if empty string
+            props['ssl.endpoint.identification.algorithm'] = ssl_endpoint_algo
 
-        return ' '.join(props)
+        return props
+
+    def _create_security_properties_file(self) -> str:
+        """
+        Create a temporary properties file with security configuration only.
+        Used for --producer.config, --consumer.config, --command-config
+        
+        Returns:
+            Path to the temporary properties file
+        """
+        # Write to temporary file
+        fd, path = tempfile.mkstemp(suffix='.properties', prefix='kafka-security-')
+        with os.fdopen(fd, 'w') as f:
+            for key, value in self.security_props.items():
+                f.write(f'{key}={value}\n')
+        
+        return path
 
     def _find_kafka_bin_dir(self) -> Path:
         """Find the Kafka bin directory."""
@@ -201,6 +226,8 @@ class KafkaPerformanceTester:
         """
         Create a Kafka topic.
         
+        Reference: AWS CDK docker/run-kafka-command.sh create-topics
+
         Args:
             topic_name: Topic name
             num_partitions: Number of partitions
@@ -210,6 +237,9 @@ class KafkaPerformanceTester:
         Returns:
             True if successful
         """
+        # Create security properties file for --command-config
+        security_props_file = self._create_security_properties_file()
+
         cmd = [
             str(self.bin_dir / 'kafka-topics.sh'),
             '--bootstrap-server', self.bootstrap_servers,
@@ -217,58 +247,86 @@ class KafkaPerformanceTester:
             '--topic', topic_name,
             '--partitions', str(num_partitions),
             '--replication-factor', str(replication_factor),
-            '--if-not-exists'
+            '--command-config', security_props_file,
         ]
-        
+
         if extra_configs:
             for config in extra_configs:
                 cmd.extend(['--config', config])
-        
+
         stdout, stderr, returncode = self.run_kafka_command(cmd)
-        
+
+        # Cleanup temporary properties file
+        try:
+            os.unlink(security_props_file)
+        except:
+            pass
+
         if returncode == 0:
             logger.info(f"Topic '{topic_name}' created successfully")
         else:
             logger.error(f"Failed to create topic '{topic_name}': {stderr}")
-        
+
         return returncode == 0
 
     def delete_topic(self, topic_name: str) -> bool:
         """
         Delete a Kafka topic.
         
+        Reference: AWS CDK docker/run-kafka-command.sh delete-topics
+
         Args:
             topic_name: Topic name
             
         Returns:
             True if successful
         """
+        # Create security properties file for --command-config
+        security_props_file = self._create_security_properties_file()
+
         cmd = [
             str(self.bin_dir / 'kafka-topics.sh'),
             '--bootstrap-server', self.bootstrap_servers,
             '--delete',
-            '--topic', topic_name
+            '--topic', topic_name,
+            '--command-config', security_props_file,
         ]
-        
+
         stdout, stderr, returncode = self.run_kafka_command(cmd)
-        
+
+        # Cleanup temporary properties file
+        try:
+            os.unlink(security_props_file)
+        except:
+            pass
+
         if returncode == 0:
             logger.info(f"Topic '{topic_name}' deleted successfully")
         else:
             logger.error(f"Failed to delete topic '{topic_name}': {stderr}")
-        
+
         return returncode == 0
 
     def list_topics(self) -> List[str]:
         """List all Kafka topics."""
+        # Create security properties file for --command-config
+        security_props_file = self._create_security_properties_file()
+
         cmd = [
             str(self.bin_dir / 'kafka-topics.sh'),
             '--bootstrap-server', self.bootstrap_servers,
-            '--list'
+            '--list',
+            '--command-config', security_props_file,
         ]
-        
+
         stdout, stderr, returncode = self.run_kafka_command(cmd)
-        
+
+        # Cleanup temporary properties file
+        try:
+            os.unlink(security_props_file)
+        except:
+            pass
+
         if returncode == 0:
             return [line.strip() for line in stdout.split('\n') if line.strip()]
         return []
@@ -278,37 +336,40 @@ class KafkaPerformanceTester:
                                test_params: Dict[str, Any]) -> Dict[str, Any]:
         """
         Run Kafka producer performance test.
+        
+        Reference: AWS CDK docker/run-kafka-command.sh producer_command()
 
         Args:
             topic: Topic name
             num_records: Number of records to produce
             throughput: Target throughput (records/sec), -1 for max
             record_size: Record size in bytes
-            producer_props: Producer properties string (compression, acks, etc.)
+            producer_props: Producer properties string (acks, linger.ms, batch.size, etc.)
             test_params: Test parameters for logging
 
         Returns:
             Dictionary with test results
         """
+        # Create security properties file for --producer.config
+        security_props_file = self._create_security_properties_file()
+
         cmd = [
             str(self.bin_dir / 'kafka-producer-perf-test.sh'),
             '--topic', topic,
             '--num-records', str(num_records),
             '--throughput', str(throughput),
             '--record-size', str(record_size),
+            # --producer-props: test-specific properties (acks, linger.ms, batch.size, etc.)
             '--producer-props', f'bootstrap.servers={self.bootstrap_servers}',
         ]
 
-        # Add security properties (from config)
-        if self.security_props:
-            for prop in self.security_props.split():
-                if prop.strip():
-                    cmd.append(prop)
-
-        # Add test-specific producer properties (compression, acks, batch.size, etc.)
+        # Add test-specific producer properties
         for prop in producer_props.split():
             if prop.strip():
                 cmd.append(prop)
+
+        # Add --producer.config for security properties
+        cmd.extend(['--producer.config', security_props_file])
 
         env = {
             'KAFKA_HEAP_OPTS': self.java_heap_opts
@@ -316,14 +377,19 @@ class KafkaPerformanceTester:
 
         logger.info(f"Starting producer test: {num_records} records, "
                    f"throughput={throughput} rec/sec, record_size={record_size} bytes")
-        if self.security_props:
-            logger.debug(f"Security properties: {self.security_props}")
+        logger.debug(f"Security properties file: {security_props_file}")
         if producer_props:
-            logger.debug(f"Producer properties: {producer_props}")
+            logger.debug(f"Test-specific properties (--producer-props): {producer_props}")
 
         start_time = time.time()
         stdout, stderr, returncode = self.run_kafka_command(cmd, env)
         elapsed_time = time.time() - start_time
+
+        # Cleanup temporary properties file
+        try:
+            os.unlink(security_props_file)
+        except:
+            pass
 
         # Parse output
         result = self._parse_producer_output(stdout, stderr, test_params)
@@ -337,6 +403,8 @@ class KafkaPerformanceTester:
                                test_params: Dict[str, Any]) -> Dict[str, Any]:
         """
         Run Kafka consumer performance test.
+        
+        Reference: AWS CDK docker/run-kafka-command.sh consumer_command()
 
         Args:
             topic: Topic name
@@ -348,37 +416,39 @@ class KafkaPerformanceTester:
         Returns:
             Dictionary with test results
         """
+        # Create security properties file for --consumer.config
+        security_props_file = self._create_security_properties_file()
+
         cmd = [
             str(self.bin_dir / 'kafka-consumer-perf-test.sh'),
             '--topic', topic,
             '--messages', str(num_messages),
             '--broker-list', self.bootstrap_servers,
-            '--group', f'{consumer_group}',
+            '--group', consumer_group,
+            '--consumer.config', security_props_file,
             '--print-metrics',
             '--show-detailed-stats',
             '--timeout', '16000'
         ]
-
-        # Add security properties (from config)
-        if self.security_props:
-            # For consumer, we need to use --consumer.config or add properties
-            # kafka-consumer-perf-test.sh supports --consumer.config file
-            # For simplicity, we add properties directly if supported
-            pass  # Security props will be added via consumer.props parameter below
 
         env = {
             'KAFKA_HEAP_OPTS': self.java_heap_opts
         }
 
         logger.info(f"Starting consumer test: {num_messages} messages, group={consumer_group}")
-        if self.security_props:
-            logger.debug(f"Security properties: {self.security_props}")
+        logger.debug(f"Security properties file: {security_props_file}")
         if consumer_props:
-            logger.debug(f"Consumer properties: {consumer_props}")
+            logger.debug(f"Test-specific properties: {consumer_props}")
 
         start_time = time.time()
         stdout, stderr, returncode = self.run_kafka_command(cmd, env)
         elapsed_time = time.time() - start_time
+
+        # Cleanup temporary properties file
+        try:
+            os.unlink(security_props_file)
+        except:
+            pass
 
         # Parse output
         result = self._parse_consumer_output(stdout, stderr, test_params)

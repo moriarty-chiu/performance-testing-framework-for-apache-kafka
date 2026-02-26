@@ -88,13 +88,13 @@ local-kafka-test/
 bootstrap_servers: localhost:9092
 kafka_home: /opt/kafka
 
-# 安全配置（可选）
+# 安全配置（可选）- 通过 --producer.config / --consumer.config / --command-config 传递
 security:
   # SSL/SASL 配置
   security_protocol: SASL_SSL
   sasl_mechanism: SCRAM-SHA-512
-  sasl_username: myuser
-  sasl_password: mypassword
+  sasl_username: alice
+  sasl_password: alice-secret
   
   # SSL 配置
   ssl_truststore_location: /path/to/truststore.jks
@@ -102,8 +102,48 @@ security:
   ssl_keystore_location: /path/to/keystore.jks
   ssl_keystore_password: password
   
-  # 禁用主机名验证（内网测试）
+  # SSL 端点识别算法（重要！）
+  # - "" (空字符串): 禁用主机名验证（内网测试/开发环境）
+  # - "HTTPS": 启用主机名验证（生产环境）
+  # 注意：即使是空字符串也必须设置，否则 SASL_SSL 连接会失败
   ssl_endpoint_identification_algorithm: ""
+```
+
+**配置分层说明**：
+
+| 参数位置 | 传递方式 | 用途 |
+|---------|---------|------|
+| `config.yaml` | `--producer.config` / `--consumer.config` / `--command-config` | 安全配置（SSL、SASL） |
+| `spec` 文件 `client_props.producer` | `--producer-props` | 测试参数（acks、linger.ms、batch.size、compression.type 等） |
+
+**生成的安全 properties 文件示例**（临时文件，自动清理）：
+
+```properties
+security.protocol=SASL_SSL
+sasl.mechanism=SCRAM-SHA-512
+sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username="alice" password="alice-secret";
+ssl.truststore.location=/path/to/truststore.jks
+ssl.truststore.password=password
+```
+
+**Kafka 命令示例**：
+
+```bash
+# Producer
+kafka-producer-perf-test.sh \
+  --topic my-topic \
+  --producer-props bootstrap.servers=localhost:9092 acks=all linger.ms=5 batch.size=65536 \
+  --producer.config /tmp/kafka-security-xxx.properties
+
+# Consumer
+kafka-consumer-perf-test.sh \
+  --consumer.config /tmp/kafka-security-xxx.properties \
+  ...
+
+# Topic management
+kafka-topics.sh \
+  --command-config /tmp/kafka-security-xxx.properties \
+  ...
 ```
 
 ### spec 文件 - 测试参数配置
