@@ -17,6 +17,7 @@ import sys
 import tempfile
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
@@ -457,7 +458,83 @@ class KafkaPerformanceTester:
 
         return result
 
-    def _parse_producer_output(self, stdout: str, stderr: str, 
+    def _run_single_producer(self, cmd: List[str], env: Dict, props_file: str, 
+                             producer_id: int, test_params: Dict) -> Dict:
+        """
+        Run a single producer process.
+        
+        Args:
+            cmd: Command to execute
+            env: Environment variables
+            props_file: Path to temporary properties file
+            producer_id: Producer ID
+            test_params: Test parameters
+            
+        Returns:
+            Producer result dictionary
+        """
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env
+        )
+        stdout, stderr = proc.communicate()
+        
+        result = self._parse_producer_output(stdout, stderr, {**test_params, 'producer_id': producer_id})
+        result['return_code'] = proc.returncode
+        
+        # Cleanup properties file
+        try:
+            os.unlink(props_file)
+        except:
+            pass
+        
+        return result
+
+    def _run_producers_parallel(self, producer_cmds: List[Dict], test_params: Dict) -> List[Dict]:
+        """
+        Run all producers in parallel using ThreadPoolExecutor.
+        
+        Args:
+            producer_cmds: List of producer command dictionaries
+            test_params: Test parameters
+            
+        Returns:
+            List of producer results
+        """
+        results = []
+        start_time = time.time()
+        
+        with ThreadPoolExecutor(max_workers=len(producer_cmds)) as executor:
+            # Submit all producer tasks
+            future_to_producer = {
+                executor.submit(
+                    self._run_single_producer,
+                    prod_info['cmd'],
+                    {'KAFKA_HEAP_OPTS': self.java_heap_opts},
+                    prod_info['props_file'],
+                    prod_info['producer_id'],
+                    test_params
+                ): prod_info['producer_id']
+                for prod_info in producer_cmds
+            }
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_producer):
+                producer_id = future_to_producer[future]
+                try:
+                    result = future.result()
+                    result['elapsed_time_sec'] = time.time() - start_time
+                    results.append(result)
+                    logger.debug(f"Producer {producer_id} completed")
+                except Exception as e:
+                    logger.error(f"Producer {producer_id} failed: {e}")
+        
+        return results
+
+    def _parse_producer_output(self, stdout: str, stderr: str,
                                test_params: Dict[str, Any]) -> Dict[str, Any]:
         """Parse producer test output."""
         result = {
@@ -465,11 +542,11 @@ class KafkaPerformanceTester:
             'raw_output': stdout,
             'raw_error': stderr,
         }
-        
+
         # Parse metrics from output
         # Example output:
         # 100000 records sent, 100000.00 records/sec (100.00 MB/sec), 5.0 ms avg latency
-        
+
         output = stdout + stderr
         
         # Extract records sent
@@ -596,31 +673,62 @@ class KafkaPerformanceTester:
             # Create topic
             logger.info(f"Creating topic: {topic}")
             self.create_topic(topic, num_partitions, replication_factor)
-            
-            # Run producer tests
+
+            # Run producer tests in PARALLEL
+            # cluster_throughput_mb_per_sec is the TOTAL CLUSTER throughput
+            # Each producer targets: cluster_throughput / num_producers
             if cluster_throughput_mb > 0:
+                # Divide cluster throughput equally among all producers
                 throughput_per_producer = int(
                     cluster_throughput_mb * 1024 * 1024 / num_producers / record_size
                 )
             else:
                 throughput_per_producer = -1  # Max throughput
-            
+
             num_records_per_producer = test_params['num_records_producer']
+
+            logger.info(f"Running {num_producers} producer(s) in PARALLEL...")
+            logger.info(f"Target throughput per producer: {throughput_per_producer} records/sec "
+                       f"({throughput_per_producer * record_size / 1024 / 1024:.2f} MB/sec)")
+            logger.info(f"Expected cluster throughput: {cluster_throughput_mb} MB/sec")
             
-            logger.info(f"Running {num_producers} producer(s)...")
+            # Start all producers in PARALLEL using ThreadPoolExecutor
+            producer_processes = []
+            producer_cmds = []
+            
             for i in range(num_producers):
-                producer_result = self.run_producer_perf_test(
-                    topic=topic,
-                    num_records=num_records_per_producer,
-                    throughput=throughput_per_producer,
-                    record_size=record_size,
-                    producer_props=client_props['producer'],
-                    test_params={**test_params, 'producer_id': i}
-                )
-                results['producer_results'].append(producer_result)
+                cmd = [
+                    str(self.bin_dir / 'kafka-producer-perf-test.sh'),
+                    '--topic', topic,
+                    '--num-records', str(num_records_per_producer),
+                    '--throughput', str(throughput_per_producer),
+                    '--record-size', str(record_size),
+                    '--producer-props', f'bootstrap.servers={self.bootstrap_servers}',
+                ]
                 
-                # Save individual producer results
-                self.save_results(producer_result, test_params['test_id'], 'producer')
+                # Add test-specific producer properties
+                for prop in client_props['producer'].split():
+                    if prop.strip():
+                        cmd.append(prop)
+                
+                # Add --producer.config for security properties
+                security_props_file = self._create_security_properties_file()
+                cmd.extend(['--producer.config', security_props_file])
+                
+                producer_cmds.append({
+                    'cmd': cmd,
+                    'props_file': security_props_file,
+                    'producer_id': i
+                })
+            
+            # Run all producers in PARALLEL
+            results['producer_results'] = self._run_producers_parallel(producer_cmds, test_params)
+            
+            # Save all producer results
+            for result in results['producer_results']:
+                self.save_results(result, test_params['test_id'], 'producer')
+            
+            logger.info(f"All {num_producers} producers completed in PARALLEL")
             
             # Run consumer tests if configured
             if consumer_groups_config['num_groups'] > 0:
@@ -719,12 +827,25 @@ class KafkaPerformanceTester:
 
             # Check skip condition AFTER running the test
             if 'skip_remaining_throughput' in event.get('test_specification', {}):
-                # Set producer result for skip condition evaluation
-                event['producer_result'] = results['producer_results'][0] if results['producer_results'] else {}
+                # Calculate total cluster throughput (sum of all producers)
+                total_cluster_mb_per_sec = sum(
+                    p.get('mbPerSecSum', 0) for p in results['producer_results']
+                )
+                
+                # cluster_throughput_mb_per_sec IS the expected cluster throughput
+                expected_cluster_throughput = test_params['cluster_throughput_mb_per_sec']
+                
+                # Create a producer_result with cluster-level metrics for skip condition evaluation
+                event['producer_result'] = {
+                    'mbPerSecSum': total_cluster_mb_per_sec,  # Cluster total throughput
+                    'records_sent': sum(p.get('records_sent', 0) for p in results['producer_results']),
+                }
 
                 skip_condition = event['test_specification']['skip_remaining_throughput']
                 if evaluate_skip_condition(skip_condition, event):
-                    logger.info(f"Skip condition met (sent/requested = {event['producer_result'].get('mbPerSecSum', 0) / test_params['cluster_throughput_mb_per_sec']:.3f}), skipping remaining throughput values")
+                    requested = expected_cluster_throughput
+                    ratio = total_cluster_mb_per_sec / requested if requested > 0 else 1.0
+                    logger.info(f"Skip condition met (cluster throughput: {total_cluster_mb_per_sec:.2f} / {requested} = {ratio:.3f}), skipping remaining throughput values")
 
         return all_results
 

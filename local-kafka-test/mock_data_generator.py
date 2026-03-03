@@ -42,6 +42,8 @@ class MockDataGenerator:
         client_props = test_params.get('client_props', {}).get('producer', '')
         
         # Calculate base throughput per producer
+        # cluster_throughput_mb_per_sec is the TOTAL CLUSTER throughput
+        # Each producer targets: cluster_throughput / num_producers
         if cluster_throughput_mb > 0:
             target_throughput_per_producer = cluster_throughput_mb / num_producers
         else:
@@ -116,7 +118,8 @@ class MockDataGenerator:
             'test_params': test_params,
             'records_sent': total_records,
             'records_per_sec': records_per_sec,
-            'mbPerSecSum': total_cluster_mb_per_sec,  # Total cluster throughput
+            'mbPerSecSum': actual_mb_per_sec,  # Individual producer throughput (for detailed metrics)
+            'total_cluster_mb_per_sec': total_cluster_mb_per_sec,  # Cluster total throughput (for skip condition)
             'avg_latency_ms': avg_latency,
             'p50_latency_ms': p50_latency,
             'p99_latency_ms': p99_latency,

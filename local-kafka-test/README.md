@@ -226,6 +226,14 @@ python run_test.py --spec specs/large-spec.json --debug --test-name large
 }
 ```
 
+**注意**：`cluster_throughput_mb_per_sec` 表示**集群总吞吐量**。
+
+例如：
+- `cluster_throughput_mb_per_sec: 16` + `num_producers: 4`
+- 集群总吞吐量：16 MB/sec
+- 每个 producer 目标：16 / 4 = 4 MB/sec
+- 所有 producer 并行执行，总吞吐量达到 16 MB/sec
+
 运行自定义测试：
 
 ```bash
