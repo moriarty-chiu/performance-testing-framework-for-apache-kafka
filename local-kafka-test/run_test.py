@@ -399,9 +399,102 @@ class KafkaPerformanceTester:
 
         return result
 
-    def run_consumer_perf_test(self, topic: str, num_messages: int,
-                               consumer_props: str, consumer_group: str,
-                               test_params: Dict[str, Any]) -> Dict[str, Any]:
+    def _run_single_consumer(self, topic: str, num_messages: int, consumer_props: str,
+                            consumer_group: str, test_params: Dict) -> Dict:
+        """
+        Run a single consumer process.
+        
+        Args:
+            topic: Topic name
+            num_messages: Number of messages to consume
+            consumer_props: Consumer properties string
+            consumer_group: Consumer group ID
+            test_params: Test parameters
+            
+        Returns:
+            Consumer result dictionary
+        """
+        # Create security properties file for --consumer.config
+        security_props_file = self._create_security_properties_file()
+
+        cmd = [
+            str(self.bin_dir / 'kafka-consumer-perf-test.sh'),
+            '--topic', topic,
+            '--messages', str(num_messages),
+            '--broker-list', self.bootstrap_servers,
+            '--group', consumer_group,
+            '--consumer.config', security_props_file,
+            '--print-metrics',
+            '--show-detailed-stats',
+            '--timeout', '16000'
+        ]
+
+        env = {
+            'KAFKA_HEAP_OPTS': self.java_heap_opts
+        }
+
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env
+        )
+        stdout, stderr = proc.communicate()
+        
+        # Cleanup properties file
+        try:
+            os.unlink(security_props_file)
+        except:
+            pass
+
+        result = self._parse_consumer_output(stdout, stderr, test_params)
+        result['return_code'] = proc.returncode
+        
+        return result
+
+    def _run_consumers_parallel(self, consumer_cmds: List[Dict], test_params: Dict) -> List[Dict]:
+        """
+        Run all consumers in parallel using ThreadPoolExecutor.
+        
+        Args:
+            consumer_cmds: List of consumer command dictionaries
+            test_params: Test parameters
+            
+        Returns:
+            List of consumer results
+        """
+        results = []
+        start_time = time.time()
+        
+        with ThreadPoolExecutor(max_workers=len(consumer_cmds)) as executor:
+            # Submit all consumer tasks
+            future_to_consumer = {
+                executor.submit(
+                    self._run_single_consumer,
+                    cmd_info['topic'],
+                    cmd_info['num_messages'],
+                    cmd_info['consumer_props'],
+                    cmd_info['consumer_group'],
+                    {**test_params, 
+                     'consumer_group_id': cmd_info['group_idx'],
+                     'consumer_id': cmd_info['consumer_idx']}
+                ): f"group-{cmd_info['group_idx']}-consumer-{cmd_info['consumer_idx']}"
+                for cmd_info in consumer_cmds
+            }
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_consumer):
+                consumer_id = future_to_consumer[future]
+                try:
+                    result = future.result()
+                    result['elapsed_time_sec'] = time.time() - start_time
+                    results.append(result)
+                    logger.debug(f"Consumer {consumer_id} completed")
+                except Exception as e:
+                    logger.error(f"Consumer {consumer_id} failed: {e}")
+        
+        return results
         """
         Run Kafka consumer performance test.
         
@@ -729,43 +822,46 @@ class KafkaPerformanceTester:
                 self.save_results(result, test_params['test_id'], 'producer')
             
             logger.info(f"All {num_producers} producers completed in PARALLEL")
-            
-            # Run consumer tests if configured
+
+            # Run consumer tests in PARALLEL if configured
             if consumer_groups_config['num_groups'] > 0:
                 num_consumers_per_group = consumer_groups_config['size']
                 num_consumer_jobs = consumer_groups_config['num_groups'] * num_consumers_per_group
-                
+
                 if cluster_throughput_mb > 0:
                     throughput_per_consumer = int(
                         cluster_throughput_mb * 1024 * 1024 / num_consumer_jobs / record_size
                     )
                 else:
                     throughput_per_consumer = -1
-                
+
                 num_records_per_consumer = test_params['num_records_consumer']
+
+                logger.info(f"Running {num_consumer_jobs} consumer(s) in PARALLEL, "
+                           f"{consumer_groups_config['num_groups']} group(s) × {num_consumers_per_group} consumers/group")
                 
-                logger.info(f"Running {num_consumer_jobs} consumer(s) in "
-                           f"{consumer_groups_config['num_groups']} group(s)...")
-                
+                # Prepare all consumer commands
+                consumer_cmds = []
                 for group_idx in range(consumer_groups_config['num_groups']):
                     for consumer_idx in range(num_consumers_per_group):
                         consumer_group = f"test-group-{test_params['test_id']}-{group_idx}"
-                        
-                        consumer_result = self.run_consumer_perf_test(
-                            topic=topic,
-                            num_messages=num_records_per_consumer,
-                            consumer_props=client_props.get('consumer', ''),
-                            consumer_group=consumer_group,
-                            test_params={
-                                **test_params,
-                                'consumer_group_id': group_idx,
-                                'consumer_id': consumer_idx
-                            }
-                        )
-                        results['consumer_results'].append(consumer_result)
-                        
-                        # Save individual consumer results
-                        self.save_results(consumer_result, test_params['test_id'], 'consumer')
+                        consumer_cmds.append({
+                            'topic': topic,
+                            'num_messages': num_records_per_consumer,
+                            'consumer_props': client_props.get('consumer', ''),
+                            'consumer_group': consumer_group,
+                            'group_idx': group_idx,
+                            'consumer_idx': consumer_idx
+                        })
+                
+                # Run all consumers in PARALLEL
+                results['consumer_results'] = self._run_consumers_parallel(consumer_cmds, test_params)
+                
+                # Save all consumer results
+                for result in results['consumer_results']:
+                    self.save_results(result, test_params['test_id'], 'consumer')
+                
+                logger.info(f"All {num_consumer_jobs} consumers completed in PARALLEL")
             
             # Delete topic after test
             logger.info(f"Deleting topic: {topic}")
